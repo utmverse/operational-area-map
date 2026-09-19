@@ -1,0 +1,48 @@
+{
+  "type": "Feature",
+  "properties": {
+    "operator_id": "Operator -002",
+    "site_id": "Denver",
+    "metro_locality": "Denver Area",
+    "center_point": {
+      "latitude": 40.085103,
+      "longitude": -105.233319
+    },
+    "geographic_bounds": {
+      "south": 39.933804,
+      "west": -106.375897,
+      "north": 40.236402,
+      "east": -104.090741
+    },
+    "coordination_contact": "John Smith | 555-312-6578",
+    "effective_from": "2026-09-25",
+    "effective_to": "2026-10-02"
+  },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [
+          -106.375897,
+          39.933804
+        ],
+        [
+          -106.375897,
+          40.236402
+        ],
+        [
+          -104.090741,
+          40.236402
+        ],
+        [
+          -104.090741,
+          39.933804
+        ],
+        [
+          -106.375897,
+          39.933804
+        ]
+      ]
+    ]
+  }
+}
