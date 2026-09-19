@@ -11,8 +11,8 @@ A GitHub-native proof of concept for publishing **minimum necessary UAS operatio
 
 | Action | Link |
 |---|---|
-| 🗺️ **View the Shared Operational Area Map** | [Open the Map](https://puchala.github.io/operational-area-map/) |
-| ✏️ **Submit an Operational Area** | [Open the Submission Tool](https://puchala.github.io/operational-area-map/submit.html) |
+| 🗺️ **View the Shared Operational Area Map** | [Open the Map](https://utmverse.github.io/operational-area-map/) |
+| ✏️ **Submit an Operational Area** | [Open the Submission Tool](https://utmverse.github.io/operational-area-map/submit.html) |
 
 **Typical flow:** Draw or define your operational area → submit the minimum required information → GitHub Actions validates and processes the submission → the published area appears on the shared map.
 
@@ -105,9 +105,9 @@ The two San Jose demonstration areas intentionally overlap so the automated over
 
 The interactive map is published through GitHub Pages from the repository's `main` branch. It displays the published areas, potential-overlap status, effective dates, and the mock coordination contact information.
 
-**[Open the Shared Operational Area Map →](https://puchala.github.io/operational-area-map/)**
+**[Open the Shared Operational Area Map →](https://utmverse.github.io/operational-area-map/)**
 
-**[Submit an Operational Area →](https://puchala.github.io/operational-area-map/submit.html)**
+**[Submit an Operational Area →](https://utmverse.github.io/operational-area-map/submit.html)**
 
 ## Minimum information
 
