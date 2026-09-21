@@ -47,7 +47,16 @@ REPLACEMENT = r'''            const buildPopup = selected => {
             // helper. Keep the lookup tied to the popup's actual center so polygons,
             // circles, and MultiCircles all use the same reverse-geocoding path.
             const reverseGeocodeForPopup = async popupInfo => {
-              const element = document.getElementById(popupInfo?.addressId);
+              // Resolve the span inside the popup that is actually open rather than
+              // by document id. Clicking a shape rebinds a fresh popup that reuses the
+              // same addressId, and Leaflet keeps the closing popup's container in the
+              // DOM for its 200ms fade, so getElementById can return the node that is
+              // fading out -- leaving the visible popup stuck on "Looking up...".
+              const popupElement = layer.getPopup()?.getElement();
+              const element = popupElement
+                ? popupElement.querySelector(`[id="${popupInfo?.addressId}"]`)
+                  || popupElement.querySelector('[id^="address-"]')
+                : null;
               const center = popupInfo?.center;
               if (!element || !center) return;
               const lat = Number(center.latitude);
