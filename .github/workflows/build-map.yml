@@ -17,6 +17,7 @@ on:
       - "scripts/fix_multicircle_visual_rendering.py"
       - "scripts/fix_geometry_overlap_ui.py"
       - "scripts/simplify_operational_area_popup.py"
+      - "scripts/address_lookup_test.mjs"
       - ".github/workflows/build-map.yml"
   repository_dispatch:
     types: [operational-area-published]
@@ -67,6 +68,9 @@ jobs:
           python scripts/simplify_operational_area_popup.py _site/index.html
           cp map/operational-areas.geojson _site/operational-areas.geojson
 
+      - name: Test address lookup
+        run: node scripts/address_lookup_test.mjs _site/index.html
+
       - name: Validate submission page
         run: |
           test -s _site/submit.html
@@ -104,10 +108,21 @@ jobs:
             echo "ERROR: effective-date details remain in popup"
             exit 1
           fi
-          if grep -Fq "address-lookup-hardening: 2026-09-21" _site/index.html; then
-            echo "ERROR: address lookup hardening is still active"
+          grep -Fq "reverse-geocode:v3" _site/index.html
+          grep -Fq "data-address-lat" _site/index.html
+          if grep -Fq "getElementById(addressId)" _site/index.html; then
+            echo "ERROR: a superseded address-lookup handler survived the patch chain"
             exit 1
           fi
+          popup_hooks=$(grep -c "on('popupopen'" _site/index.html || true)
+          if [ "$popup_hooks" != "1" ]; then
+            echo "ERROR: expected exactly one popupopen handler, found $popup_hooks"
+            exit 1
+          fi
+          # The count above only proves no duplicate handler crept back in; these
+          # prove the single handler is actually wired to both popup paths.
+          grep -Fq "bindPopupAddressLookup(layer)" _site/index.html
+          grep -Fq "bindPopupAddressLookup(circleLayer)" _site/index.html
           echo "Map page validation passed."
 
       - name: Upload Pages artifact

@@ -44,21 +44,6 @@ replacement = '''            const validCenters = definition?.type === 'MultiCir
               });
               return best.index;
             };
-            const selectedPolygonIndex = (latlng, targetLayer) => {
-              if (!polygonChildLayers.length) return 0;
-              const directIndex = polygonChildLayers.indexOf(targetLayer);
-              if (directIndex >= 0) return directIndex;
-              let bestIndex = 0;
-              let bestDistance = Infinity;
-              polygonChildLayers.forEach((child, index) => {
-                const bounds = child.getBounds();
-                if (bounds.contains(latlng)) { bestIndex = index; bestDistance = -1; return; }
-                if (bestDistance < 0) return;
-                const distance = map.distance(bounds.getCenter(), latlng);
-                if (distance < bestDistance) { bestIndex = index; bestDistance = distance; }
-              });
-              return bestIndex;
-            };
             const buildPopup = selected => {
               let popupCenter = selected?.center || null;
               if (!popupCenter && selected?.type === 'Polygon' && polygonChildLayers[selected.index]) {
@@ -68,13 +53,11 @@ replacement = '''            const validCenters = definition?.type === 'MultiCir
               const centerRow = popupCenter
                 ? `<div class="popup-row"><strong>Center:</strong> ${escapeHtml(Number(popupCenter.latitude).toFixed(6))}, ${escapeHtml(Number(popupCenter.longitude).toFixed(6))}</div>`
                 : '';
-              const addressId = `address-${L.Util.stamp(layer)}-${selected ? `${selected.type}-${selected.index}` : 'primary'}`;
               return {
-                addressId,
-                center: popupCenter,
-                html: `<div class="popup-title">${escapeHtml(p.operator_id)} · ${escapeHtml(p.site_id)}</div><div class="popup-row"><strong>Locality:</strong> ${escapeHtml(p.metro_locality || 'Not specified')}</div>${centerRow}<div class="popup-row"><strong>Address:</strong> <span id="${addressId}">Looking up…</span></div>${p.coordination_contact ? `<div class="popup-contact"><strong>Coordination contact:</strong><br>${escapeHtml(p.coordination_contact)}</div>` : ''}`
+                html: `<div class="popup-title">${escapeHtml(p.operator_id)} · ${escapeHtml(p.site_id)}</div><div class="popup-row"><strong>Locality:</strong> ${escapeHtml(p.metro_locality || 'Not specified')}</div>${centerRow}${addressRowHtml('Address', popupCenter)}${p.coordination_contact ? `<div class="popup-contact"><strong>Coordination contact:</strong><br>${escapeHtml(p.coordination_contact)}</div>` : ''}`
               };
             };
+            layer._oamBuildPopup = buildPopup;
             let activePopupInfo = buildPopup(null);
             layer.bindPopup(activePopupInfo.html);
             const openSelectedPopup = (selected, event) => {
@@ -99,10 +82,6 @@ replacement = '''            const validCenters = definition?.type === 'MultiCir
                 openSelectedPopup({ type: 'Circle', index: 0, center: definition.center_point }, event);
               });
             }
-            layer.on('popupopen', () => {
-              requestAnimationFrame(() => reverseGeocodeForPopup(activePopupInfo));
-            });
-
             const markerCenters = definition?.type === 'MultiCircle' '''
 
 text = text[:match.start()] + replacement + text[match.end():]
