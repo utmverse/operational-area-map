@@ -5,6 +5,8 @@ The bridge intercepts the existing button handler so every geometry type uses
 one consistent, human-readable GitHub issue body with a hidden OAM2 payload.
 It deliberately does not select an issue template because the template can
 replace/ignore URL-prefilled body content in GitHub's issue composer.
+Opening the issue is delegated to the page's openGitHubIssue() so detailed
+(e.g. uploaded) areas that exceed GitHub's URL limit fall back to copy/paste.
 """
 
 from pathlib import Path
@@ -98,6 +100,10 @@ BRIDGE = r'''<script>
     const siteId = payload.site_id || payload.site_area_id || '';
     const title = 'Operational Area Submission: ' + siteId;
     const body = buildVisibleBody(payload);
+    if (typeof openGitHubIssue === 'function') {
+      openGitHubIssue(repoUrl, title, body);
+      return;
+    }
     const url = repoUrl + '/issues/new?title=' + encodeURIComponent(title) +
       '&body=' + encodeURIComponent(body);
 
@@ -113,7 +119,7 @@ def main() -> None:
 
     path = Path(sys.argv[1])
     html = path.read_text(encoding='utf-8')
-    marker = '<!-- submission-preview-bridge: unified-v2 -->'
+    marker = '<!-- submission-preview-bridge: unified-v3 -->'
     if marker in html:
         return
 

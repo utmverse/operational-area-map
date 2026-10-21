@@ -52,6 +52,8 @@ The repository now supports an operator-friendly submission path: an operator de
 
 Open the **Operational Area Drawing Tool** on the GitHub Pages site. Draw a polygon, rectangle, or circle and review the generated geometry.
 
+Operators with existing area files can instead **upload GeoJSON, KML, or KMZ files**, selecting several at once or uploading in batches. Polygons from every upload are combined, and overlapping shapes are merged into a single valid Polygon/MultiPolygon. Points and lines are ignored.
+
 The tool also calculates the center point and geographic bounds for convenience. For circles, it additionally captures the radius and preserves the center point + radius as the operational-area definition.
 
 ### 2. Submit the minimum information

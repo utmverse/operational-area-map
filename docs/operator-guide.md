@@ -7,6 +7,7 @@
    - Polygon
    - Rectangle
    - Circle
+   - Upload GeoJSON, KML, or KMZ files (see [Uploading files](#uploading-files))
 3. For a polygon or rectangle, draw the operational area directly.
 4. For a circle, click and drag from the center point to define the radius.
 5. Review the shape, center point, geographic bounds, and radius when applicable.
@@ -27,6 +28,19 @@ Published records are stored under:
 ```text
 operational-areas/<OPERATOR-ID>/<SITE-ID>.geojson
 ```
+
+## Uploading files
+
+Use **Choose Files** or drag and drop files onto the upload panel. Supported formats are `.geojson`/`.json`, `.kml`, and `.kmz` (up to 20 MB each), with coordinates in WGS 84 longitude/latitude.
+
+- Select several files at once, or upload in batches. Each upload is added to the operational area, and re-uploading a file with the same name (for example after editing it) replaces its earlier shapes.
+- Only Polygon and MultiPolygon shapes are used. Points and lines are ignored and reported.
+- All uploaded polygons, plus one drawn polygon or rectangle if present, are merged into a single Polygon or MultiPolygon. Overlaps are dissolved, and the submission processor repairs any remaining invalid ring structure before publication so the area passes validation. In the rare case that the browser cannot merge a particular set of shapes, they are submitted unmerged and merged automatically during processing.
+- Uploaded polygons and circles cannot be combined: uploading removes any circles, and adding a circle removes the uploads.
+- Each uploaded file is listed with its polygon and vertex counts and can be removed individually. Uploads are paused while the map's edit or delete tool is open.
+- Uploads are limited to 5,000 vertices in total. A single GitHub submission can carry roughly 1,800 vertices, so larger areas must be simplified in a GIS tool before uploading.
+
+If an area that includes uploads is too detailed to prefill through a GitHub link, the tool shows **Copy Issue Text** and **Open GitHub Issue** buttons: copy the text, open the issue, replace the description with the copied text, and click **Create**. If the issue was created without the copied text, edit the issue description, paste the text, and save; the submission is processed when the edit is saved.
 
 ## Geometry handling
 
