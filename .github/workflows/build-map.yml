@@ -80,6 +80,10 @@ jobs:
           fi
           grep -Fq "/issues/new?title=" _site/submit.html
           grep -Fq "<!-- OAM2:" _site/submit.html
+          # The bridge must delegate to the page so oversized areas use the copy/paste path.
+          grep -Fq "<!-- submission-preview-bridge: unified-v3 -->" _site/submit.html
+          grep -Fq "typeof openGitHubIssue === 'function'" _site/submit.html
+          grep -Fq "function openGitHubIssue(" _site/submit.html
           echo "Submission page validation passed."
 
       - name: Validate map page

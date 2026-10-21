@@ -122,6 +122,48 @@ def circle_to_polygon(center_lat, center_lng, radius_meters, segments=64):
     return {"type": "Polygon", "coordinates": [coordinates]}
 
 
+def repair_geometry(geometry):
+    """Return valid geometry unchanged; repair invalid geometry before publication.
+
+    CI rejects geometry that shapely reports as invalid, which would leave the
+    submission PR unmerged. Merged browser uploads can occasionally produce
+    ring structures GEOS rejects even though the covered area is correct, and
+    when the browser cannot merge uploads at all it submits the shapes
+    unmerged (overlapping MultiPolygon parts). Each part is repaired on its
+    own and the parts are unioned: make_valid() on the whole MultiPolygon
+    would turn overlaps into holes instead of merging them.
+    """
+    try:
+        from shapely.geometry import mapping, shape
+        from shapely.ops import unary_union
+        from shapely.validation import make_valid
+        geom = shape(geometry)
+    except Exception as exc:  # shapely unavailable or unparseable: leave it to CI as before.
+        print(f"::warning::Skipping geometry repair: {exc}")
+        return geometry
+
+    if geom.is_valid:
+        return geometry
+
+    polygons = []
+    for part in getattr(geom, "geoms", [geom]):
+        fixed = make_valid(part)
+        polygons.extend(
+            piece for piece in getattr(fixed, "geoms", [fixed])
+            if piece.geom_type in ("Polygon", "MultiPolygon")
+        )
+    repaired = unary_union(polygons) if polygons else None
+    if (
+        repaired is None
+        or repaired.is_empty
+        or not repaired.is_valid
+        or repaired.geom_type not in ("Polygon", "MultiPolygon")
+    ):
+        fail("Geometry is invalid and could not be repaired automatically.")
+    print("::warning::Submitted geometry was invalid and has been repaired with make_valid().")
+    return json.loads(json.dumps(mapping(repaired)))
+
+
 def safe_filename(value):
     value = re.sub(r"[^A-Za-z0-9._-]", "-", value)
     value = re.sub(r"-+", "-", value).strip("-")
@@ -368,6 +410,7 @@ def main():
 
     if geometry is None:
         fail('Provide Operational Area Geometry or a Circle Operational Area Definition.')
+    geometry = repair_geometry(geometry)
     safe_operator = safe_filename(operator_id)
     safe_site = safe_filename(site_id)
     if not safe_operator or not safe_site:

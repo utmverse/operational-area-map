@@ -3,7 +3,14 @@ run-name: Process operational area issue #${{ github.event.issue.number }}
 
 on:
   issues:
-    types: [opened, reopened]
+    # `edited` lets an operator who opened the issue before pasting the
+    # submission text (large-area copy/paste path) fix it in place.
+    types: [opened, reopened, edited]
+
+# Serialize runs for the same issue so rapid edits cannot race each other.
+concurrency:
+  group: operational-area-submission-${{ github.event.issue.number }}
+  cancel-in-progress: false
 
 permissions:
   contents: write

@@ -22,7 +22,7 @@
     .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
     button, a.button { border: 0; border-radius: 9px; padding: 11px 16px; font-weight: 700; cursor: pointer; text-decoration: none; font-size: 14px; }
     button.primary, a.button.primary { background: #0f172a; color: white; }
-    button.secondary { background: #e2e8f0; color: #172033; }
+    button.secondary, a.button.secondary { background: #e2e8f0; color: #172033; }
     button.danger { background: #fee2e2; color: #991b1b; }
     button:disabled { opacity: .45; cursor: not-allowed; }
     input, select { font: inherit; }
@@ -43,16 +43,27 @@
     .circle-item strong { display: block; font-size: 13px; margin-bottom: 2px; }
     .circle-item span { color: #64748b; font-size: 12px; }
     .circle-builder-status { display: none; margin-top: 10px; border-left: 4px solid #dc2626; background: #fef2f2; color: #991b1b; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
+    .upload-builder { margin-top: 16px; padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; }
+    .upload-builder h3 { margin: 0 0 5px; font-size: 16px; }
+    .upload-builder p { margin: 0 0 14px; color: #64748b; font-size: 13px; }
+    .upload-dropzone { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 16px; background: white; border: 2px dashed #cbd5e1; border-radius: 10px; }
+    .upload-dropzone.dragover { border-color: #0f172a; background: #eef2f7; }
+    .upload-dropzone span { display: block; margin-top: 3px; color: #64748b; font-size: 12px; }
+    .upload-dropzone .actions { margin-top: 0; }
+    .upload-status { display: none; margin-top: 10px; border-left: 4px solid #16a34a; background: #f0fdf4; color: #14532d; padding: 10px 12px; border-radius: 8px; font-size: 13px; white-space: pre-line; }
+    .upload-status.info { border-left-color: #64748b; background: #f8fafc; color: #334155; }
+    .upload-status.warning { border-left-color: #f59e0b; background: #fffbeb; color: #78350f; }
+    .upload-status.error { border-left-color: #dc2626; background: #fef2f2; color: #991b1b; }
     @media (max-width: 720px) { .steps, .meta, .circle-builder-grid { grid-template-columns: 1fr; } main { padding: 14px; } #map { height: 460px; } .circle-item { grid-template-columns: 1fr; } }
   </style>
-  <!-- submission-flow-version: 2026-09-21.6 -->
+  <!-- submission-flow-version: 2026-10-20.1 -->
 </head>
 <body>
 <header><div class="wrap"><h1>Operational Area Submission</h1><p>Define the minimum geographic area needed for overlap awareness, then submit it through the GitHub review workflow.</p></div></header>
 <main>
   <section class="card">
     <div class="steps">
-      <div class="step"><strong>1. Define</strong>Draw a polygon, rectangle, or circle, or create one or more circles from exact center points and radii.</div>
+      <div class="step"><strong>1. Define</strong>Draw a polygon, rectangle, or circle, create one or more circles from exact center points and radii, or upload GeoJSON, KML, or KMZ files.</div>
       <div class="step"><strong>2. Review</strong>Check every shape, center point, radius, and geographic bounds before submitting.</div>
       <div class="step"><strong>3. Submit</strong>Complete the submission details, then create a prefilled GitHub request for review.</div>
     </div>
@@ -71,6 +82,17 @@
       <div class="actions"><button id="createCircleFromInputs" class="primary" type="button">Add Circle</button></div>
       <div id="circleBuilderStatus" class="circle-builder-status" role="alert" aria-live="polite"></div>
       <div id="circleList" class="circle-list" aria-live="polite"></div>
+    </div>
+    <div class="upload-builder" aria-labelledby="uploadBuilderTitle">
+      <h3 id="uploadBuilderTitle">Upload GeoJSON, KML, or KMZ Files</h3>
+      <p>Add polygon areas from existing files. Select several files at once, or upload in batches: each batch is added to the area, and overlapping shapes are merged into one Polygon/MultiPolygon. Points and lines are ignored, and uploaded polygons replace any circles.</p>
+      <div id="uploadDropzone" class="upload-dropzone">
+        <div><strong>Drag &amp; drop files here</strong><span>.geojson, .json, .kml, or .kmz &bull; WGS 84 longitude/latitude &bull; up to 20 MB per file and 5,000 vertices in total</span></div>
+        <div class="actions"><button id="chooseUploadFiles" class="primary" type="button">Choose Files</button><button id="clearUploads" class="danger" type="button" hidden>Remove All Uploads</button></div>
+      </div>
+      <input id="uploadFiles" type="file" multiple hidden>
+      <div id="uploadStatus" class="upload-status" role="status" aria-live="polite"></div>
+      <div id="uploadList" class="circle-list" aria-live="polite"></div>
     </div>
     <div class="actions">
       <button id="copy" class="primary" disabled>Copy GeoJSON Geometry</button>
@@ -107,6 +129,15 @@
       <label style="font-size:13px;font-weight:600;"><input id="authorized" type="checkbox"> I confirm I am authorized to publish this operational-area information on behalf of the operator.</label>
     </div>
     <div class="actions"><button id="createGithubSubmission" class="primary" disabled>Open GitHub Submission</button><button id="copySubmissionText" class="secondary" disabled>Copy Submission Text</button></div>
+    <div id="largeSubmission" class="notice" style="margin-top:14px;" hidden>
+      <strong>This area is too detailed for a prefilled GitHub link.</strong> It can still be submitted in two steps:
+      <ol style="margin:8px 0 0;padding-left:20px;font-size:13px;">
+        <li>Click <strong>Copy Issue Text</strong>.</li>
+        <li>Click <strong>Open GitHub Issue</strong>, replace the issue description with the copied text, then click <strong>Create</strong>.</li>
+      </ol>
+      <textarea id="largeSubmissionText" readonly aria-label="GitHub issue text for this submission" style="min-height:90px;background:white;"></textarea>
+      <div class="actions" style="margin-top:10px;"><button id="copyLargeSubmission" class="primary" type="button">Copy Issue Text</button><a id="openLargeSubmission" class="button secondary" target="_blank" rel="noopener">Open GitHub Issue</a></div>
+    </div>
     <div id="submissionStatus" class="notice" style="display:none;margin-top:14px;"></div>
   </section>
   <section class="card">
@@ -115,6 +146,8 @@
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js" crossorigin=""></script>
+<script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin=""></script>
+<script src="https://unpkg.com/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js" integrity="sha384-2gzcIyrtB96QDjrxsFcJ1O461CWiXJ8fiHgIkJLwTgy4WTktHXTOXt4dviXz9Y5Q" crossorigin=""></script>
 <script>
   const map = L.map('map').setView([37.35, -121.91], 11);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
@@ -140,7 +173,24 @@
   const createGithubSubmission = document.getElementById('createGithubSubmission');
   const copySubmissionText = document.getElementById('copySubmissionText');
   const submissionStatus = document.getElementById('submissionStatus');
-  let circleDefinition = null;
+  const uploadFiles = document.getElementById('uploadFiles');
+  const chooseUploadFiles = document.getElementById('chooseUploadFiles');
+  const clearUploads = document.getElementById('clearUploads');
+  const uploadDropzone = document.getElementById('uploadDropzone');
+  const uploadStatus = document.getElementById('uploadStatus');
+  const uploadList = document.getElementById('uploadList');
+  const largeSubmission = document.getElementById('largeSubmission');
+  const largeSubmissionText = document.getElementById('largeSubmissionText');
+  const copyLargeSubmission = document.getElementById('copyLargeSubmission');
+  const openLargeSubmission = document.getElementById('openLargeSubmission');
+  const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+  // Uploaded vertices are rendered, made editable by leaflet-draw, and merged on the main thread; a GitHub submission carries only ~1,800.
+  const MAX_UPLOAD_VERTICES = 5000;
+  // Signed-out users are sent through github.com/login?return_to=<encoded issue link>, which fails above ~6,900 characters.
+  const MAX_GITHUB_LOGIN_URL_LENGTH = 6700;
+  // GitHub rejects issue bodies over 65,536 characters; keep headroom for CRLF line endings added by the browser.
+  const MAX_ISSUE_BODY_LENGTH = 65000;
+  let circleDefinition = null, uploadsBusy = false, drawToolbarActive = false, combineError = '';
 
   function setCircleBuilderStatus(message) { circleBuilderStatus.textContent = message || ''; circleBuilderStatus.style.display = message ? 'block' : 'none'; }
   function trim(value, decimals = 7) { return Number(value.toFixed(decimals)).toString(); }
@@ -169,10 +219,145 @@
     layers.forEach((layer, index) => { const c = layer.getLatLng(), item = document.createElement('div'); item.className = 'circle-item'; const info = document.createElement('div'), title = document.createElement('strong'), detail = document.createElement('span'); title.textContent = 'Circle ' + (index + 1); detail.textContent = trim(c.lat) + ', ' + trim(c.lng) + ' • ' + formatRadius(layer.getRadius()); info.appendChild(title); info.appendChild(detail); const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = 'Remove'; remove.addEventListener('click', () => { drawn.removeLayer(layer); refresh(); }); item.appendChild(info); item.appendChild(remove); circleList.appendChild(item); });
   }
   function getGitHubRepositoryUrl() { const host = window.location.hostname, pathParts = window.location.pathname.split('/').filter(Boolean); if (host.endsWith('.github.io') && pathParts.length >= 1) return `https://github.com/${host.split('.')[0]}/${pathParts[0]}`; throw new Error('This page must be hosted from the GitHub Pages repository to generate a GitHub submission link.'); }
-  function getSelectedNonCircleLayer() { let layer = null; drawn.eachLayer(candidate => { if (!(candidate instanceof L.Circle)) layer = candidate; }); return layer; }
+  function getNonCircleLayers() { const layers = []; drawn.eachLayer(layer => { if (!(layer instanceof L.Circle)) layers.push(layer); }); return layers; }
+  function getUploadedLayers() { return getNonCircleLayers().filter(layer => layer.uploadFile); }
+  function plural(count, singular, pluralForm) { return count.toLocaleString() + ' ' + (count === 1 ? singular : pluralForm); }
+  function countGeometryVertices(geometry) { const polygons = geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates]; return polygons.reduce((sum, rings) => sum + rings.reduce((ringSum, ring) => ringSum + ring.length - 1, 0), 0); }
+  function countLayerVertices(layer) { return layer.getLatLngs().flat(Infinity).length; }
+  function setUploadStatus(message, tone) { uploadStatus.textContent = message || ''; uploadStatus.className = 'upload-status' + (tone ? ' ' + tone : ''); uploadStatus.style.display = message ? 'block' : 'none'; }
+  // Uploads are paused while files are being read and while the map's edit/delete mode is open, so the map and the submitted geometry cannot diverge.
+  function uploadsLocked() { return uploadsBusy || drawToolbarActive; }
+  function updateUploadControls() { const locked = uploadsLocked(); chooseUploadFiles.disabled = locked; clearUploads.disabled = locked; uploadList.querySelectorAll('button').forEach(button => { button.disabled = locked; }); }
+  function renderUploadList() {
+    uploadList.innerHTML = ''; const groups = new Map();
+    getUploadedLayers().forEach(layer => { const group = groups.get(layer.uploadFile.key) || { name: layer.uploadFile.name, layers: [] }; group.layers.push(layer); groups.set(layer.uploadFile.key, group); });
+    groups.forEach(group => { const item = document.createElement('div'); item.className = 'circle-item'; const info = document.createElement('div'), title = document.createElement('strong'), detail = document.createElement('span'), vertices = group.layers.reduce((sum, layer) => sum + countLayerVertices(layer), 0); title.textContent = group.name; detail.textContent = plural(group.layers.length, 'polygon', 'polygons') + ' • ' + plural(vertices, 'vertex', 'vertices'); info.appendChild(title); info.appendChild(detail); const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger'; remove.textContent = 'Remove'; remove.addEventListener('click', () => { group.layers.forEach(layer => drawn.removeLayer(layer)); if (!getUploadedLayers().length) setUploadStatus(''); refresh(); }); item.appendChild(info); item.appendChild(remove); uploadList.appendChild(item); });
+    clearUploads.hidden = groups.size === 0; updateUploadControls();
+  }
+  // Numbers (GeoJSON) or non-empty numeric strings (KML); anything else, including null and '', is rejected rather than read as 0.
+  function toCoordinate(value) { return typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN; }
+  // Returns an open ring of [lng, lat] positions rounded to 7 decimals, or null when fewer than 3 distinct positions remain.
+  function cleanRing(ring) {
+    if (!Array.isArray(ring)) throw new Error('Contains an invalid polygon ring.');
+    const positions = [];
+    ring.forEach(position => {
+      const lng = Array.isArray(position) ? toCoordinate(position[0]) : NaN, lat = Array.isArray(position) ? toCoordinate(position[1]) : NaN;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat) || lng < -180 || lng > 180 || lat < -90 || lat > 90) throw new Error('Contains missing or out-of-range coordinates. Export the file in WGS 84 (EPSG:4326) longitude/latitude.');
+      const point = [Number(lng.toFixed(7)), Number(lat.toFixed(7))], last = positions[positions.length - 1];
+      if (!last || last[0] !== point[0] || last[1] !== point[1]) positions.push(point);
+    });
+    if (positions.length > 1 && positions[0][0] === positions[positions.length - 1][0] && positions[0][1] === positions[positions.length - 1][1]) positions.pop();
+    return positions.length >= 3 ? positions : null;
+  }
+  function cleanPolygon(rings) { if (!Array.isArray(rings)) throw new Error('Contains an invalid polygon.'); const [outer, ...holes] = rings.map(cleanRing); return outer ? [outer, ...holes.filter(Boolean)] : null; }
+  function parseGeoJson(text) {
+    let data; try { data = JSON.parse(text); } catch (error) { throw new Error('Not valid JSON.'); }
+    if (!data || !['FeatureCollection', 'Feature', 'GeometryCollection', 'Polygon', 'MultiPolygon', 'Point', 'MultiPoint', 'LineString', 'MultiLineString'].includes(data.type)) throw new Error('Not a GeoJSON object.');
+    const result = { polygons: [], skipped: 0 };
+    const visit = node => {
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'FeatureCollection') (Array.isArray(node.features) ? node.features : []).forEach(visit);
+      else if (node.type === 'Feature') visit(node.geometry);
+      else if (node.type === 'GeometryCollection') (Array.isArray(node.geometries) ? node.geometries : []).forEach(visit);
+      else if (node.type === 'Polygon') result.polygons.push(node.coordinates);
+      else if (node.type === 'MultiPolygon') (Array.isArray(node.coordinates) ? node.coordinates : []).forEach(polygon => result.polygons.push(polygon));
+      else result.skipped++;
+    };
+    visit(data); return result;
+  }
+  function parseKml(text) {
+    const doc = new DOMParser().parseFromString(text.trimStart(), 'application/xml'), byTag = (node, tag) => Array.from(node.getElementsByTagNameNS('*', tag));
+    if (byTag(doc, 'parsererror').length) throw new Error('Not valid KML.');
+    // Tolerates "lon, lat" but not whitespace before a comma, so a malformed tuple cannot merge into its neighbour as altitude.
+    const readCoordinates = element => element.textContent.trim().replace(/,\s+/g, ',').split(/\s+/).filter(Boolean).map(tuple => tuple.split(','));
+    const polygons = byTag(doc, 'Polygon').map(polygon => { const outer = byTag(polygon, 'outerBoundaryIs').flatMap(boundary => byTag(boundary, 'coordinates'))[0], holes = byTag(polygon, 'innerBoundaryIs').flatMap(boundary => byTag(boundary, 'coordinates')); return outer ? [outer, ...holes].map(readCoordinates) : []; });
+    return { polygons, skipped: ['Point', 'LineString', 'Track'].reduce((sum, tag) => sum + byTag(doc, tag).length, 0) };
+  }
+  async function parseKmz(file) {
+    if (!window.JSZip) throw new Error('The KMZ reader failed to load. Reload the page and try again.');
+    let zip; try { zip = await JSZip.loadAsync(await file.arrayBuffer()); } catch (error) { throw new Error('Not a valid KMZ archive.'); }
+    const entries = Object.values(zip.files).filter(entry => !entry.dir && /\.kml$/i.test(entry.name)), main = entries.find(entry => entry.name.toLowerCase() === 'doc.kml') || entries[0];
+    if (!main) throw new Error('The KMZ archive does not contain a KML document.');
+    return parseKml(await main.async('string'));
+  }
+  async function readUploadFile(file) {
+    const extension = (file.name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
+    if (file.size > MAX_UPLOAD_BYTES) throw new Error('File is larger than 20 MB.');
+    if (extension === 'kmz') return parseKmz(file);
+    if (extension === 'kml') return parseKml(await file.text());
+    if (extension === 'geojson' || extension === 'json') return parseGeoJson(await file.text());
+    throw new Error('Unsupported file type. Upload .geojson, .json, .kml, or .kmz files.');
+  }
+  async function addUploadedFiles(files) {
+    if (!files.length || uploadsBusy) return;
+    if (drawToolbarActive) { setUploadStatus('Finish or cancel editing/deleting on the map before uploading files.', 'warning'); return; }
+    uploadsBusy = true; updateUploadControls(); setUploadStatus('Reading ' + plural(files.length, 'file', 'files') + '…', 'info');
+    const loaded = [], messages = []; let skipped = 0;
+    try {
+      // Vertices already uploaded, excluding files about to be replaced by a same-name upload.
+      let budget = MAX_UPLOAD_VERTICES - getUploadedLayers().filter(layer => !files.some(file => file.name === layer.uploadFile.name)).reduce((sum, layer) => sum + countLayerVertices(layer), 0);
+      for (const file of files) {
+        try {
+          const result = await readUploadFile(file), polygons = result.polygons.map(cleanPolygon).filter(Boolean);
+          skipped += result.skipped + result.polygons.length - polygons.length;
+          if (!polygons.length) throw new Error('No polygon areas found. Only Polygon and MultiPolygon shapes can be uploaded.');
+          const vertices = polygons.reduce((sum, rings) => sum + rings.reduce((ringSum, ring) => ringSum + ring.length, 0), 0);
+          if (vertices > budget) throw new Error('Too detailed: ' + plural(vertices, 'vertex', 'vertices') + ' would exceed the ' + MAX_UPLOAD_VERTICES.toLocaleString() + '-vertex upload limit (one GitHub submission can carry roughly 1,800). Simplify the shapes in your GIS tool and upload again.');
+          budget -= vertices; loaded.push({ file, polygons });
+        } catch (error) { messages.push(file.name + ': ' + error.message); }
+      }
+      if (drawToolbarActive) { setUploadStatus('Upload cancelled because map editing started. Finish or cancel the edit, then upload again.', 'warning'); return; }
+      if (loaded.length) {
+        // Circles are submitted as center/radius definitions, so they cannot be combined with polygon areas.
+        const circles = getCircleLayers(); circles.forEach(layer => drawn.removeLayer(layer));
+        let replaced = 0;
+        loaded.forEach(({ file, polygons }) => {
+          // Re-uploading a file with the same name (e.g. after editing it) replaces its earlier shapes.
+          const previous = getUploadedLayers().filter(layer => layer.uploadFile.name === file.name); if (previous.length) replaced++; previous.forEach(layer => drawn.removeLayer(layer));
+          polygons.forEach(rings => { const layer = L.polygon(rings.map(ring => ring.map(([lng, lat]) => [lat, lng]))); layer.uploadFile = { key: file.name, name: file.name }; drawn.addLayer(layer); });
+        });
+        map.fitBounds(L.featureGroup(getUploadedLayers()).getBounds(), { padding: [24, 24] });
+        messages.unshift('Added ' + plural(loaded.reduce((sum, item) => sum + item.polygons.length, 0), 'polygon', 'polygons') + ' from ' + plural(loaded.length, 'file', 'files') + '.' + (replaced ? ' Replaced the earlier upload of ' + plural(replaced, 'file', 'files') + ' with the same name.' : '') + (circles.length ? ' Circles were removed because circles and polygon areas cannot be submitted together.' : ''));
+      }
+    } finally { uploadsBusy = false; updateUploadControls(); }
+    if (skipped) messages.push('Ignored ' + plural(skipped, 'point, line, or empty shape', 'points, lines, or empty shapes') + '.');
+    setUploadStatus(messages.join('\n'), !loaded.length ? 'error' : messages.length > 1 ? 'warning' : '');
+    refresh();
+    if (loaded.length && output.value) {
+      const geometry = JSON.parse(output.value), estimatedBodyLength = Math.ceil((JSON.stringify(geometry).length + 800) * 4 / 3) + 500;
+      if (estimatedBodyLength > MAX_ISSUE_BODY_LENGTH) setUploadStatus(uploadStatus.textContent + '\nThe combined area has ' + plural(countGeometryVertices(geometry), 'vertex', 'vertices') + ', which is more than GitHub can accept in one submission (roughly 1,800). Simplify the shapes in your GIS tool and upload them again.', 'error');
+    }
+  }
+  // Merges overlapping shapes so the published MultiPolygon passes the repository's geometry validation.
+  // The result is deliberately not re-rounded: snapping new intersection points to 7 decimals can make it invalid.
+  function combinePolygonLayers(layers) {
+    const polygons = layers.flatMap(layer => { const geometry = layer.toGeoJSON(7).geometry; return geometry.type === 'MultiPolygon' ? geometry.coordinates : [geometry.coordinates]; });
+    let merged;
+    try { merged = polygonClipping.union(...polygons); } catch (error) {
+      // polygon-clipping overflows the stack on some near-coincident boundaries (and may fail to load); submit the shapes
+      // unmerged instead, and the submission processor merges them with shapely before publication.
+      combineError = 'These shapes could not be merged in your browser, so they will be merged automatically when the submission is processed.'; setUploadStatus(combineError, 'warning');
+      return polygons.length === 1 ? { type: 'Polygon', coordinates: polygons[0] } : { type: 'MultiPolygon', coordinates: polygons };
+    }
+    if (!merged.length) throw new Error('the shapes do not enclose any area.');
+    return merged.length === 1 ? { type: 'Polygon', coordinates: merged[0] } : { type: 'MultiPolygon', coordinates: merged };
+  }
+  // Estimates the sign-in redirect GitHub builds for signed-out users; characters left raw by encodeURIComponent but escaped by GitHub count as 3.
+  function prefilledLinkFits(url) { return ('https://github.com/login?return_to=' + encodeURIComponent(url)).replace(/[!'()*~]/g, '%XX').length <= MAX_GITHUB_LOGIN_URL_LENGTH; }
+  // Areas built from uploads can be too large to prefill through the URL, so they fall back to copying the issue text manually.
+  // Submissions without uploads (drawn shapes, circles) always open the prefilled link exactly as before.
+  function openGitHubIssue(repoUrl, title, body) {
+    const issueUrl = repoUrl + '/issues/new?title=' + encodeURIComponent(title), prefilledUrl = issueUrl + '&body=' + encodeURIComponent(body);
+    largeSubmission.hidden = true; submissionStatus.style.display = 'none';
+    if (!getUploadedLayers().length || prefilledLinkFits(prefilledUrl)) { window.open(prefilledUrl, '_blank', 'noopener'); return; }
+    if (body.length > MAX_ISSUE_BODY_LENGTH) { submissionStatus.style.display = 'block'; submissionStatus.textContent = 'This operational area is too detailed to submit through GitHub (' + plural(countGeometryVertices(JSON.parse(submissionGeometry.value)), 'vertex', 'vertices') + '). Simplify the shapes in your GIS tool and upload them again.'; return; }
+    largeSubmissionText.value = body; openLargeSubmission.href = issueUrl + '&body=' + encodeURIComponent('Replace this line with the issue text copied from the Operational Area Submission Tool. Issues without that text are not processed.'); largeSubmission.hidden = false; largeSubmission.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
   function refresh() {
-    const circles = getCircleLayers(), nonCircle = getSelectedNonCircleLayer(); renderCircleList();
-    if (circles.length > 0 && nonCircle) { drawn.removeLayer(nonCircle); return refresh(); }
+    const circles = getCircleLayers(), nonCircles = getNonCircleLayers(); renderCircleList(); renderUploadList();
+    // Clear a previous "Unable to combine" error once it no longer applies (only if it is still the message shown).
+    if (combineError && uploadStatus.textContent === combineError) setUploadStatus(''); combineError = '';
+    if (circles.length > 0 && nonCircles.length > 0) { if (nonCircles.some(layer => layer.uploadFile)) setUploadStatus('Uploaded shapes were removed because circles and polygon areas cannot be submitted together.', 'warning'); nonCircles.forEach(layer => drawn.removeLayer(layer)); return refresh(); }
     if (circles.length > 0) {
       const definitions = circles.map(layer => { const c = layer.getLatLng(); return { type: 'Circle', center_point: { latitude: Number(c.lat.toFixed(7)), longitude: Number(c.lng.toFixed(7)) }, radius_meters: Number(layer.getRadius().toFixed(2)) }; });
       circleDefinition = definitions.length === 1 ? definitions[0] : { type: 'MultiCircle', circles: definitions };
@@ -183,21 +368,34 @@
       radius.textContent = circles.map((layer, i) => 'Circle ' + (i + 1) + ': ' + formatRadius(layer.getRadius())).join(' | '); const combined = L.featureGroup(circles), b = combined.getBounds(); bounds.textContent = trim(b.getSouth()) + ', ' + trim(b.getWest()) + ' to ' + trim(b.getNorth()) + ', ' + trim(b.getEast()); boundsInput.value = bounds.textContent;
       updateCircleInputsFromLayer(circles[circles.length - 1]); updateSubmissionButtons(); return;
     }
-    circleDefinition = null;
-    if (!nonCircle) { output.value = ''; submissionGeometry.value = ''; center.textContent = 'Draw an area to calculate'; bounds.textContent = 'Draw an area to calculate'; radius.textContent = 'Only applicable to circles'; centerPointInput.value = ''; boundsInput.value = ''; updateSubmissionButtons(); return; }
-    clearCircleInputs(); const geojson = nonCircle.toGeoJSON(); output.value = JSON.stringify(geojson.geometry, null, 2); submissionGeometry.value = output.value;
-    if (nonCircle.getBounds) { const b = nonCircle.getBounds(), c = b.getCenter(); center.textContent = trim(c.lat) + ', ' + trim(c.lng); centerPointInput.value = center.textContent; bounds.textContent = trim(b.getSouth()) + ', ' + trim(b.getWest()) + ' to ' + trim(b.getNorth()) + ', ' + trim(b.getEast()); boundsInput.value = bounds.textContent; }
+    circleDefinition = null; let geometry = null;
+    try { if (nonCircles.length) geometry = nonCircles.length === 1 && !nonCircles[0].uploadFile ? nonCircles[0].toGeoJSON().geometry : combinePolygonLayers(nonCircles); } catch (error) { combineError = 'Unable to combine the polygon areas: ' + error.message; setUploadStatus(combineError, 'error'); }
+    if (!geometry) { output.value = ''; submissionGeometry.value = ''; center.textContent = 'Draw an area to calculate'; bounds.textContent = 'Draw an area to calculate'; radius.textContent = 'Only applicable to circles'; centerPointInput.value = ''; boundsInput.value = ''; updateSubmissionButtons(); return; }
+    clearCircleInputs(); output.value = JSON.stringify(geometry, null, 2); submissionGeometry.value = output.value;
+    const b = L.featureGroup(nonCircles).getBounds(), c = b.getCenter(); center.textContent = trim(c.lat) + ', ' + trim(c.lng); centerPointInput.value = center.textContent; bounds.textContent = trim(b.getSouth()) + ', ' + trim(b.getWest()) + ' to ' + trim(b.getNorth()) + ', ' + trim(b.getEast()); boundsInput.value = bounds.textContent;
     radius.textContent = 'Only applicable to circles'; updateSubmissionButtons();
   }
   createCircleFromInputs.addEventListener('click', createCircleFromValues);
-  map.on(L.Draw.Event.CREATED, e => { if (e.layer instanceof L.Circle) drawn.addLayer(e.layer); else { drawn.clearLayers(); drawn.addLayer(e.layer); } refresh(); });
-  map.on(L.Draw.Event.EDITED, refresh); map.on(L.Draw.Event.DELETED, refresh);
+  map.on(L.Draw.Event.CREATED, e => { if (e.layer instanceof L.Circle) drawn.addLayer(e.layer); else { drawn.eachLayer(layer => { if (!layer.uploadFile) drawn.removeLayer(layer); }); drawn.addLayer(e.layer); } refresh(); });
+  chooseUploadFiles.addEventListener('click', () => uploadFiles.click());
+  uploadFiles.addEventListener('change', () => { const files = Array.from(uploadFiles.files); uploadFiles.value = ''; addUploadedFiles(files); });
+  clearUploads.addEventListener('click', () => { getUploadedLayers().forEach(layer => drawn.removeLayer(layer)); setUploadStatus(''); refresh(); });
+  ['dragenter', 'dragover'].forEach(type => uploadDropzone.addEventListener(type, e => { e.preventDefault(); uploadDropzone.classList.add('dragover'); }));
+  uploadDropzone.addEventListener('dragleave', e => { if (!uploadDropzone.contains(e.relatedTarget)) uploadDropzone.classList.remove('dragover'); });
+  uploadDropzone.addEventListener('drop', e => { e.preventDefault(); uploadDropzone.classList.remove('dragover'); addUploadedFiles(Array.from(e.dataTransfer.files)); });
+  // A file dropped beside the drop zone would otherwise navigate away and discard the form.
+  ['dragover', 'drop'].forEach(type => window.addEventListener(type, e => { if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault(); }));
+  copyLargeSubmission.addEventListener('click', async () => { largeSubmissionText.select(); try { await navigator.clipboard.writeText(largeSubmissionText.value); copyLargeSubmission.textContent = 'Copied'; } catch (error) { copyLargeSubmission.textContent = 'Press Ctrl+C / ⌘C to copy'; } setTimeout(() => copyLargeSubmission.textContent = 'Copy Issue Text', 1500); });
+  map.on(L.Draw.Event.EDITED, refresh); map.on(L.Draw.Event.DELETED, () => { if (!getUploadedLayers().length) setUploadStatus(''); refresh(); });
+  map.on(L.Draw.Event.EDITSTART + ' ' + L.Draw.Event.DELETESTART, () => { drawToolbarActive = true; updateUploadControls(); });
+  // Cancelling an edit/delete restores layers without an EDITED/DELETED event, so recompute when the mode ends.
+  map.on(L.Draw.Event.EDITSTOP + ' ' + L.Draw.Event.DELETESTOP, () => { drawToolbarActive = false; updateUploadControls(); refresh(); });
   copy.addEventListener('click', async () => { if (!output.value) return; await navigator.clipboard.writeText(output.value); copy.textContent = 'Copied'; setTimeout(() => copy.textContent = 'Copy GeoJSON Geometry', 1200); });
   download.addEventListener('click', () => { if (!output.value) return; const blob = new Blob([output.value], { type: 'application/geo+json' }), url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = 'operational-area-geometry.geojson'; a.click(); URL.revokeObjectURL(url); });
   const submissionInputs = ['operatorId','siteId','metroLocality','contactName','contactEmail','contactPhone','effectiveFrom','effectiveTo','minimumInfo','authorized']; submissionInputs.forEach(id => { const el = document.getElementById(id); el.addEventListener('input', updateSubmissionButtons); el.addEventListener('change', updateSubmissionButtons); });
   const effectiveFrom = document.getElementById('effectiveFrom'), effectiveTo = document.getElementById('effectiveTo'); effectiveFrom.addEventListener('change', () => { effectiveTo.min = effectiveFrom.value || ''; if (effectiveTo.value && effectiveFrom.value && effectiveTo.value < effectiveFrom.value) effectiveTo.value = effectiveFrom.value; updateSubmissionButtons(); });
   function getSubmissionPayload() {
-    if (!getCircleLayers().length && !getSelectedNonCircleLayer()) return null;
+    if (!output.value) return null;
     const payload = { version: 1, submission_type: 'operational_area', operator_id: document.getElementById('operatorId').value.trim(), site_id: document.getElementById('siteId').value.trim(), site_area_id: document.getElementById('siteId').value.trim(), metro_locality: document.getElementById('metroLocality').value.trim(), center_point: centerPointInput.value, geographic_bounds: boundsInput.value, coordination_contact: { name: document.getElementById('contactName').value.trim(), email: document.getElementById('contactEmail').value.trim(), phone: document.getElementById('contactPhone').value.trim() }, coordination_contact_name: document.getElementById('contactName').value.trim(), coordination_contact_email: document.getElementById('contactEmail').value.trim(), coordination_contact_phone: document.getElementById('contactPhone').value.trim(), effective_from: effectiveFrom.value, effective_to: effectiveTo.value, operational_area_definition: circleDefinition, geometry: circleDefinition ? null : JSON.parse(submissionGeometry.value), confirm_minimum_info: document.getElementById('minimumInfo').checked, authorized: document.getElementById('authorized').checked, confirmations: { minimum_information: document.getElementById('minimumInfo').checked, authorized: document.getElementById('authorized').checked } };
     return payload;
   }
@@ -210,9 +408,9 @@
     const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     return '<!-- OPERATIONAL-AREA-SUBMISSION -->\n\n<!-- Submission details are populated automatically by the Operational Area Submission Tool. -->\n\n<!-- OAM2:' + encoded + ' -->';
   }
-  function updateSubmissionButtons() { const hasGeometry = getCircleLayers().length > 0 || !!getSelectedNonCircleLayer(), required = ['operatorId','siteId','metroLocality'].every(id => document.getElementById(id).value.trim()), confirmations = document.getElementById('minimumInfo').checked && document.getElementById('authorized').checked, validDates = !effectiveFrom.value || !effectiveTo.value || effectiveTo.value >= effectiveFrom.value, ready = hasGeometry && required && confirmations && validDates; createGithubSubmission.disabled = !ready; copySubmissionText.disabled = !ready; copy.disabled = !hasGeometry; download.disabled = !hasGeometry; }
+  function updateSubmissionButtons() { largeSubmission.hidden = true; const hasGeometry = !!output.value, required = ['operatorId','siteId','metroLocality'].every(id => document.getElementById(id).value.trim()), confirmations = document.getElementById('minimumInfo').checked && document.getElementById('authorized').checked, validDates = !effectiveFrom.value || !effectiveTo.value || effectiveTo.value >= effectiveFrom.value, ready = hasGeometry && required && confirmations && validDates; createGithubSubmission.disabled = !ready; copySubmissionText.disabled = !ready; copy.disabled = !hasGeometry; download.disabled = !hasGeometry; }
   copySubmissionText.addEventListener('click', async () => { const text = buildSubmissionText(); if (!text) return; await navigator.clipboard.writeText(text); submissionStatus.style.display = 'block'; submissionStatus.textContent = 'Submission text copied to clipboard.'; });
-  createGithubSubmission.addEventListener('click', () => { try { const repoUrl = getGitHubRepositoryUrl(), title = encodeURIComponent('Operational Area Submission: ' + document.getElementById('siteId').value.trim()), body = encodeURIComponent(buildGitHubIssueBody()), template = encodeURIComponent('operational-area.md'); window.open(repoUrl + '/issues/new?template=' + template + '&title=' + title + '&body=' + body, '_blank', 'noopener'); } catch (error) { submissionStatus.style.display = 'block'; submissionStatus.textContent = error.message; } });
+  createGithubSubmission.addEventListener('click', () => { try { openGitHubIssue(getGitHubRepositoryUrl(), 'Operational Area Submission: ' + document.getElementById('siteId').value.trim(), buildGitHubIssueBody()); } catch (error) { submissionStatus.style.display = 'block'; submissionStatus.textContent = error.message; } });
   refresh();
 </script>
 </body>
