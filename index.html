@@ -75,35 +75,271 @@
     const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
     const formatRadius = radiusMeters => (radiusMeters * 0.000621371).toFixed(2) + ' mi (' + (radiusMeters / 1000).toFixed(2) + ' km)';
 
-    const geocodeCache = new Map();
-    let lastGeocodeAt = 0;
+    // --- reverse-geocode:v3 start ---------------------------------------------
+    // Addresses come from OpenStreetMap's Nominatim service, whose usage policy
+    // allows at most one request per second per client. Every lookup therefore
+    // goes through a single serialized queue, is deduplicated by coordinate, and
+    // is cached for the session. Failures are cached only briefly so a transient
+    // network error does not permanently pin a popup to an error message.
+    //
+    // Because the queue is shared, a slow or throttled service must not be
+    // allowed to make every other popup wait behind it: a Retry-After pauses the
+    // whole queue, and a run of consecutive failures trips a breaker that answers
+    // the remaining popups immediately instead of queueing doomed requests.
+    const GEOCODE_ENDPOINT = 'https://nominatim.openstreetmap.org/reverse';
+    const GEOCODE_MIN_INTERVAL_MS = 1100;
+    const GEOCODE_TIMEOUT_MS = 6000;
+    const GEOCODE_MAX_ATTEMPTS = 2;
+    const GEOCODE_MAX_BACKOFF_MS = 10000;
+    const GEOCODE_FAILURE_TTL_MS = 30000;
+    const GEOCODE_BREAKER_THRESHOLD = 2;
+    const GEOCODE_BREAKER_COOLDOWN_MS = 30000;
+    const GEOCODE_PENDING_TEXT = 'Looking up…';
+    const GEOCODE_UNAVAILABLE_TEXT = 'Address not available';
+
+    const geocodeResults = new Map();
+    const geocodeInFlight = new Map();
+    const geocodeFailedUntil = new Map();
+    let geocodeQueue = Promise.resolve();
+    let lastGeocodeStartedAt = 0;
+    let geocodePausedUntil = 0;
+    let geocodeConsecutiveFailures = 0;
+    let geocodeBreakerUntil = 0;
+
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    // Number(null) and Number('') are 0, which would quietly turn a missing
+    // coordinate into a lookup of 0°N 0°E, so only numbers and numeric strings
+    // (popup data attributes arrive as strings) are accepted.
+    function toFiniteNumber(value) {
+      if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+      if (typeof value !== 'string' || value.trim() === '') return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function normalizeCoordinate(lat, lng) {
+      const latitude = toFiniteNumber(lat);
+      let longitude = toFiniteNumber(lng);
+      if (latitude === null || longitude === null) return null;
+      if (latitude < -90 || latitude > 90) return null;
+      // Leaflet reports longitudes outside [-180, 180] once the map has been
+      // panned onto a world copy; wrap them instead of failing the lookup.
+      if (longitude < -180 || longitude > 180) longitude = (((longitude + 180) % 360) + 360) % 360 - 180;
+      return { latitude, longitude };
+    }
+
+    function geocodeKey(point) {
+      return `${point.latitude.toFixed(6)},${point.longitude.toFixed(6)}`;
+    }
 
     function formatAddress(address, displayName) {
-      if (!address) return displayName || 'Address not available';
-      const parts = [
-        address.house_number && address.road ? `${address.house_number} ${address.road}` : address.road,
-        address.neighbourhood || address.suburb,
-        address.city || address.town || address.village || address.municipality,
-        address.state,
-        address.postcode
-      ].filter(Boolean);
-      return parts.join(', ') || displayName || 'Address not available';
+      if (!address) return displayName || GEOCODE_UNAVAILABLE_TEXT;
+      const street = address.house_number && address.road ? `${address.house_number} ${address.road}` : address.road;
+      // County is the last resort: unincorporated areas carry no city/town/village.
+      const locality = address.city || address.town || address.village || address.municipality || address.hamlet || address.county;
+      const parts = [street, address.neighbourhood || address.suburb, locality, address.state, address.postcode]
+        .map(part => (typeof part === 'string' ? part.trim() : part))
+        .filter(Boolean);
+      const unique = parts.filter((part, index) => parts.indexOf(part) === index);
+      return unique.join(', ') || displayName || GEOCODE_UNAVAILABLE_TEXT;
     }
 
-    async function reverseGeocode(lat, lng) {
-      const key = `${lat.toFixed(6)},${lng.toFixed(6)}`;
-      if (geocodeCache.has(key)) return geocodeCache.get(key);
-      const waitMs = Math.max(0, 1000 - (Date.now() - lastGeocodeAt));
-      if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
-      lastGeocodeAt = Date.now();
-      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&zoom=18&addressdetails=1`;
-      const response = await fetch(url, { headers: { 'Accept': 'application/json' } });
-      if (!response.ok) throw new Error(`Reverse geocoding returned HTTP ${response.status}`);
-      const result = await response.json();
-      const address = formatAddress(result.address, result.display_name);
-      geocodeCache.set(key, address);
-      return address;
+    function parseRetryAfter(value) {
+      if (!value) return null;
+      const seconds = Number(value);
+      if (Number.isFinite(seconds)) return Math.min(GEOCODE_MAX_BACKOFF_MS, Math.max(0, seconds * 1000));
+      const at = Date.parse(value);
+      if (!Number.isFinite(at)) return null;
+      return Math.min(GEOCODE_MAX_BACKOFF_MS, Math.max(0, at - Date.now()));
     }
+
+    function isRetryableGeocodeError(error) {
+      if (!error) return false;
+      if (error.breaker) return false;
+      if (error.name === 'AbortError') return true;
+      // No status means a network, CORS, or JSON-parse failure: worth one more try.
+      if (!Number.isFinite(error.status)) return true;
+      return error.status === 408 || error.status === 429 || error.status >= 500;
+    }
+
+    // Tagged so it is neither retried nor counted as further evidence that the
+    // service is down; it *is* the consequence of that verdict.
+    function geocodeBreakerError() {
+      const error = new Error('Address lookup is temporarily unavailable');
+      error.breaker = true;
+      return error;
+    }
+
+    function isGeocodeBreakerOpen() {
+      if (geocodeBreakerUntil > Date.now()) return true;
+      if (geocodeBreakerUntil) {
+        // Cooldown elapsed: let the next lookup probe the service again.
+        geocodeBreakerUntil = 0;
+        geocodeConsecutiveFailures = 0;
+      }
+      return false;
+    }
+
+    function recordGeocodeOutcome(error) {
+      if (!error) {
+        geocodeConsecutiveFailures = 0;
+        geocodeBreakerUntil = 0;
+        return;
+      }
+      geocodeConsecutiveFailures += 1;
+      if (geocodeConsecutiveFailures >= GEOCODE_BREAKER_THRESHOLD) {
+        geocodeBreakerUntil = Date.now() + GEOCODE_BREAKER_COOLDOWN_MS;
+      }
+    }
+
+    function pauseGeocodeQueue(untilMs) {
+      if (untilMs > geocodePausedUntil) geocodePausedUntil = untilMs;
+    }
+
+    // Serializes every outbound request so bursts of popup opens cannot exceed the
+    // one-request-per-second limit. Reserving the slot inside the chain (rather
+    // than at call time) is what keeps concurrent callers from firing together.
+    function runQueuedGeocode(task) {
+      const run = geocodeQueue.then(async () => {
+        const readyAt = Math.max(lastGeocodeStartedAt + GEOCODE_MIN_INTERVAL_MS, geocodePausedUntil);
+        const waitMs = readyAt - Date.now();
+        if (waitMs > 0) await sleep(waitMs);
+        // Checked here as well as at call time: by the time a queued attempt
+        // reaches the front, the service may already have been declared down, and
+        // sending it would only make the popups behind it wait longer.
+        if (isGeocodeBreakerOpen()) throw geocodeBreakerError();
+        lastGeocodeStartedAt = Date.now();
+        return task();
+      });
+      geocodeQueue = run.then(() => {}, () => {});
+      return run;
+    }
+
+    async function requestAddress(point, signal) {
+      const params = new URLSearchParams({
+        format: 'jsonv2',
+        lat: point.latitude.toFixed(6),
+        lon: point.longitude.toFixed(6),
+        zoom: '18',
+        addressdetails: '1'
+      });
+      const language = typeof navigator === 'object' && navigator && navigator.language ? navigator.language : '';
+      if (language) params.set('accept-language', language);
+      const response = await fetch(`${GEOCODE_ENDPOINT}?${params.toString()}`, {
+        headers: { 'Accept': 'application/json' },
+        signal
+      });
+      if (!response.ok) {
+        const error = new Error(`Reverse geocoding returned HTTP ${response.status}`);
+        error.status = response.status;
+        error.retryAfterMs = parseRetryAfter(response.headers && response.headers.get ? response.headers.get('Retry-After') : null);
+        throw error;
+      }
+      const result = await response.json();
+      // Nominatim answers HTTP 200 with an `error` body for coordinates that have
+      // no addressable feature (open water, ice shelves). That is a final answer,
+      // so it is cached like a successful lookup instead of being retried.
+      if (!result || result.error) return GEOCODE_UNAVAILABLE_TEXT;
+      return formatAddress(result.address, result.display_name);
+    }
+
+    async function requestAddressWithTimeout(point) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), GEOCODE_TIMEOUT_MS);
+      try {
+        return await requestAddress(point, controller.signal);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    async function resolveAddress(point) {
+      let lastError = null;
+      for (let attempt = 1; attempt <= GEOCODE_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          const address = await runQueuedGeocode(() => requestAddressWithTimeout(point));
+          recordGeocodeOutcome(null);
+          return address;
+        } catch (error) {
+          lastError = error;
+          if (!error || !error.breaker) recordGeocodeOutcome(error);
+          const retryAfterMs = error && Number.isFinite(error.retryAfterMs) ? error.retryAfterMs : null;
+          // A throttled or overloaded service is asking the whole client to slow
+          // down, not just this coordinate, so hold the shared queue back too.
+          if (retryAfterMs !== null) pauseGeocodeQueue(Date.now() + retryAfterMs);
+          if (attempt === GEOCODE_MAX_ATTEMPTS || !isRetryableGeocodeError(error)) break;
+          await sleep(retryAfterMs === null ? GEOCODE_MIN_INTERVAL_MS * attempt : retryAfterMs);
+        }
+      }
+      throw lastError || new Error('Reverse geocoding failed');
+    }
+
+    function reverseGeocode(lat, lng) {
+      const point = normalizeCoordinate(lat, lng);
+      if (!point) return Promise.reject(new Error('Reverse geocoding needs a finite coordinate'));
+      const key = geocodeKey(point);
+      if (geocodeResults.has(key)) return Promise.resolve(geocodeResults.get(key));
+      const pending = geocodeInFlight.get(key);
+      if (pending) return pending;
+      const failedUntil = geocodeFailedUntil.get(key);
+      if (failedUntil && failedUntil > Date.now()) {
+        return Promise.reject(new Error('Reverse geocoding failed recently for this coordinate'));
+      }
+      if (isGeocodeBreakerOpen()) return Promise.reject(geocodeBreakerError());
+      let lookup;
+      lookup = (async () => {
+        try {
+          const address = await resolveAddress(point);
+          geocodeResults.set(key, address);
+          geocodeFailedUntil.delete(key);
+          return address;
+        } catch (error) {
+          geocodeFailedUntil.set(key, Date.now() + GEOCODE_FAILURE_TTL_MS);
+          throw error;
+        } finally {
+          if (geocodeInFlight.get(key) === lookup) geocodeInFlight.delete(key);
+        }
+      })();
+      geocodeInFlight.set(key, lookup);
+      return lookup;
+    }
+
+    // The coordinate is carried on the span itself so the address can never
+    // disagree with the center shown beside it, whichever shape or popup was
+    // bound last.
+    function addressRowHtml(label, point) {
+      const normalized = point ? normalizeCoordinate(point.latitude, point.longitude) : null;
+      if (!normalized) return `<div class="popup-row"><strong>${escapeHtml(label)}:</strong> ${GEOCODE_UNAVAILABLE_TEXT}</div>`;
+      return `<div class="popup-row"><strong>${escapeHtml(label)}:</strong> <span class="popup-address" data-address-lat="${normalized.latitude.toFixed(6)}" data-address-lng="${normalized.longitude.toFixed(6)}" aria-live="polite">${GEOCODE_PENDING_TEXT}</span></div>`;
+    }
+
+    async function hydratePopupAddress(popupElement) {
+      const element = popupElement ? popupElement.querySelector('.popup-address[data-address-lat][data-address-lng]') : null;
+      // Leaflet rebuilds a popup's content on every open, so each open gets a
+      // fresh span and re-enters here; the session cache answers those instantly
+      // without another request. This guard only protects against being called
+      // twice for one span, e.g. opening an already-open popup.
+      if (!element || element.dataset.addressState === 'pending') return;
+      element.dataset.addressState = 'pending';
+      element.textContent = GEOCODE_PENDING_TEXT;
+      try {
+        const address = await reverseGeocode(element.dataset.addressLat, element.dataset.addressLng);
+        element.textContent = address;
+        element.dataset.addressState = 'resolved';
+      } catch (error) {
+        console.warn('Reverse geocoding failed:', error);
+        element.textContent = GEOCODE_UNAVAILABLE_TEXT;
+        element.dataset.addressState = 'failed';
+      }
+    }
+
+    // Resolving from the popup that actually opened avoids the stale-id and
+    // fading-container races that left popups stuck on "Looking up…".
+    function bindPopupAddressLookup(target) {
+      target.on('popupopen', event => { hydratePopupAddress(event.popup && event.popup.getElement()); });
+    }
+    // --- reverse-geocode:v3 end -----------------------------------------------
 
     fetch('operational-areas.geojson', { cache:'no-store' })
       .then(r => { if (!r.ok) throw new Error(`Map data returned HTTP ${r.status}`); return r.json(); })
@@ -154,9 +390,8 @@
             const effectiveText = effectiveFrom
               ? `${escapeHtml(effectiveFrom)}${effectiveTo ? ` to ${escapeHtml(effectiveTo)}` : ''}`
               : (effectiveTo ? `Until ${escapeHtml(effectiveTo)}` : 'Not specified');
-            const addressId = `address-${L.Util.stamp(layer)}`;
             const addressLabel = definition?.type === 'MultiCircle' ? 'Approx. address (first center)' : 'Address';
-            layer.bindPopup(`<div class="popup-title">${escapeHtml(p.operator_id)} · ${escapeHtml(p.site_id)}</div><div class="popup-row"><strong>Locality:</strong> ${escapeHtml(p.metro_locality || 'Not specified')}</div>${centerRow}<div class="popup-row"><strong>${addressLabel}:</strong> <span id="${addressId}">${center ? 'Loading…' : 'Not available'}</span></div>${definitionRow}<div class="popup-row"><strong>Effective:</strong> ${effectiveText}</div><div class="popup-row"><strong>Status:</strong> ${p.potential_overlap ? 'Potential geographic overlap' : 'No detected overlap'}</div>${overlapWith.length ? `<div class="popup-row"><strong>Overlap with:</strong> ${overlapWith.map(escapeHtml).join(', ')}</div>` : ''}${p.coordination_contact ? `<div class="popup-contact"><strong>Coordination contact:</strong><br>${escapeHtml(p.coordination_contact)}</div>` : ''}<div class="popup-note">Informational awareness only — not an authorization or coordination determination. Address is an approximate reverse-geocoded location from the center point.</div>`);
+            layer.bindPopup(`<div class="popup-title">${escapeHtml(p.operator_id)} · ${escapeHtml(p.site_id)}</div><div class="popup-row"><strong>Locality:</strong> ${escapeHtml(p.metro_locality || 'Not specified')}</div>${centerRow}${addressRowHtml(addressLabel, center)}${definitionRow}<div class="popup-row"><strong>Effective:</strong> ${effectiveText}</div><div class="popup-row"><strong>Status:</strong> ${p.potential_overlap ? 'Potential geographic overlap' : 'No detected overlap'}</div>${overlapWith.length ? `<div class="popup-row"><strong>Overlap with:</strong> ${overlapWith.map(escapeHtml).join(', ')}</div>` : ''}${p.coordination_contact ? `<div class="popup-contact"><strong>Coordination contact:</strong><br>${escapeHtml(p.coordination_contact)}</div>` : ''}<div class="popup-note">Informational awareness only — not an authorization or coordination determination. Address is an approximate reverse-geocoded location from the center point.</div>`);
 
             const markerCenters = definition?.type === 'MultiCircle' && Array.isArray(definition.circles)
               ? definition.circles.map(circle => circle?.center_point).filter(c => c && typeof c.latitude === 'number' && typeof c.longitude === 'number')
@@ -176,16 +411,7 @@
               layer._circleCenterMarkers.push(centerMarker);
             });
 
-            layer.on('popupopen', async () => {
-              const element = document.getElementById(addressId);
-              if (!element || !center || typeof center.latitude !== 'number' || typeof center.longitude !== 'number') return;
-              try {
-                element.textContent = await reverseGeocode(center.latitude, center.longitude);
-              } catch (error) {
-                console.error('Reverse geocoding failed:', error);
-                element.textContent = 'Address not available';
-              }
-            });
+            bindPopupAddressLookup(layer);
           }
         }).addTo(map);
 

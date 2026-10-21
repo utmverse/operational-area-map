@@ -31,47 +31,19 @@ REPLACEMENT = r'''            const buildPopup = selected => {
               const centerRow = popupCenter
                 ? `<div class="popup-row"><strong>Center:</strong> ${escapeHtml(Number(popupCenter.latitude).toFixed(6))}, ${escapeHtml(Number(popupCenter.longitude).toFixed(6))}</div>`
                 : '';
-              const addressId = `address-${L.Util.stamp(layer)}-${selected ? `${selected.type}-${selected.index}` : 'primary'}`;
               const addressLabel = selected?.type === 'Circle'
                 ? `Address (Circle ${selected.index + 1} center)`
                 : 'Address';
 
+              // The address row carries its own coordinate, so whichever popup ends
+              // up open resolves the center it is actually displaying. That removes
+              // the stale-id and fading-container races that previously left popups
+              // stuck on "Looking up...".
               return {
-                addressId,
-                center: popupCenter,
-                html: `<div class="popup-title">${escapeHtml(p.operator_id)} · ${escapeHtml(p.site_id)}</div><div class="popup-row"><strong>Locality:</strong> ${escapeHtml(p.metro_locality || 'Not specified')}</div>${centerRow}<div class="popup-row"><strong>${addressLabel}:</strong> <span id="${addressId}">Looking up…</span></div>${p.coordination_contact ? `<div class="popup-contact"><strong>Coordination contact:</strong><br>${escapeHtml(p.coordination_contact)}</div>` : ''}`
+                html: `<div class="popup-title">${escapeHtml(p.operator_id)} · ${escapeHtml(p.site_id)}</div><div class="popup-row"><strong>Locality:</strong> ${escapeHtml(p.metro_locality || 'Not specified')}</div>${centerRow}${addressRowHtml(addressLabel, popupCenter)}${p.coordination_contact ? `<div class="popup-contact"><strong>Coordination contact:</strong><br>${escapeHtml(p.coordination_contact)}</div>` : ''}`
               };
             };
-
-            // The geometry/popup patcher installs a popup-open hook that calls this
-            // helper. Keep the lookup tied to the popup's actual center so polygons,
-            // circles, and MultiCircles all use the same reverse-geocoding path.
-            const reverseGeocodeForPopup = async popupInfo => {
-              // Resolve the span inside the popup that is actually open rather than
-              // by document id. Clicking a shape rebinds a fresh popup that reuses the
-              // same addressId, and Leaflet keeps the closing popup's container in the
-              // DOM for its 200ms fade, so getElementById can return the node that is
-              // fading out -- leaving the visible popup stuck on "Looking up...".
-              const popupElement = layer.getPopup()?.getElement();
-              const element = popupElement
-                ? popupElement.querySelector(`[id="${popupInfo?.addressId}"]`)
-                  || popupElement.querySelector('[id^="address-"]')
-                : null;
-              const center = popupInfo?.center;
-              if (!element || !center) return;
-              const lat = Number(center.latitude);
-              const lng = Number(center.longitude);
-              if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-                element.textContent = 'Address not available';
-                return;
-              }
-              try {
-                element.textContent = await reverseGeocode(lat, lng);
-              } catch (error) {
-                console.error('Reverse geocoding failed:', error);
-                element.textContent = 'Address not available';
-              }
-            };
+            layer._oamBuildPopup = buildPopup;
 '''
 
 
@@ -93,6 +65,17 @@ def main() -> None:
 
     text = text[:start] + REPLACEMENT + text[end:]
     text = text.replace("</head>", f"  {MARKER}\n</head>", 1)
+
+    # Guard the two ways this patch chain has broken address lookup before: losing
+    # the shared geocoder, and leaving a superseded handler that resolves the
+    # address span by an identifier no longer in scope.
+    if "reverse-geocode:v3" not in text:
+        raise SystemExit("Page is missing the hardened reverse geocoder (reverse-geocode:v3)")
+    if "getElementById(addressId)" in text:
+        raise SystemExit("Page still contains a superseded address-lookup handler")
+    hooks = text.count("bindPopupAddressLookup(")
+    if hooks < 3:
+        raise SystemExit(f"Expected the shared address-lookup hook to be wired up, found {hooks} references")
     path.write_text(text, encoding="utf-8")
     print("Applied minimal operational-area popup with shared reverse geocoder.")
 
